@@ -1,6 +1,6 @@
 # ES Maker
 
-AIでエントリーシートを作成、調整する小さなWebアプリです。
+AIでエントリーシートを作成・調整する小さなWebアプリです。
 
 ## 構成
 - Frontend: HTML/CSS/JavaScript
