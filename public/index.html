@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>ES Maker | AIでESを作る</title>
+  <meta name="description" content="あなたの経験からAIがエントリーシートを作成・添削します。">
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <header class="nav">
+    <div class="brand"><span class="logo">E</span><span>ES Maker</span></div>
+    <span class="badge">AI × 就活</span>
+  </header>
+
+  <main class="container">
+    <section class="hero">
+      <p class="eyebrow">ENTRY SHEET GENERATOR</p>
+      <h1>あなたの経験を、<br><span>伝わるES</span>に。</h1>
+      <p class="lead">経験や考えていることを入力するだけ。AIが企業・設問・文字数に合わせてESを構成します。</p>
+    </section>
+
+    <section class="grid">
+      <form id="esForm" class="card form-card">
+        <div class="section-title"><span>01</span><h2>ESの条件</h2></div>
+
+        <div class="two">
+          <label>企業名<input id="company" placeholder="例：アクセンチュア"></label>
+          <label>職種<input id="role" placeholder="例：ソフトウェアエンジニア"></label>
+        </div>
+
+        <label>設問
+          <textarea id="question" rows="3" placeholder="例：学生時代に力を入れたことを教えてください。"></textarea>
+        </label>
+
+        <div class="two">
+          <label>目標文字数
+            <select id="limit">
+              <option value="200">200字</option><option value="300">300字</option>
+              <option value="400" selected>400字</option><option value="500">500字</option>
+              <option value="600">600字</option><option value="800">800字</option>
+            </select>
+          </label>
+          <label>文章の雰囲気
+            <select id="tone">
+              <option value="自然で自分らしい" selected>自然で自分らしい</option>
+              <option value="論理的で端的">論理的で端的</option>
+              <option value="熱意を強める">熱意を強める</option>
+              <option value="落ち着いて誠実">落ち着いて誠実</option>
+            </select>
+          </label>
+        </div>
+
+        <div class="section-title second"><span>02</span><h2>あなたの素材</h2></div>
+        <label>経験・エピソード
+          <textarea id="experience" rows="9" placeholder="箇条書きでも大丈夫です。
+
+例：
+・軽音楽部で部長を務めた
+・部員同士の意見が合わず、練習参加率も低かった
+・全員と1on1をして原因を聞いた
+・練習方針を話し合いで決めるようにした
+・最終的に参加率が上がり、ライブを成功させた"></textarea>
+        </label>
+
+        <label>特に伝えたいこと（任意）
+          <textarea id="appeal" rows="4" placeholder="自分の強み、工夫した点、数字、結果など"></textarea>
+        </label>
+
+        <button class="primary" type="submit"><span>✦</span> AIでESを作成する</button>
+        <p class="hint">入力内容はES生成のためにAIへ送信されます。公開・保存はこのサイトでは行いません。</p>
+      </form>
+
+      <aside class="card result-card">
+        <div class="result-head">
+          <div class="section-title"><span>03</span><h2>生成結果</h2></div>
+          <span id="count" class="count">0字</span>
+        </div>
+        <div id="status" class="empty">
+          <div class="empty-icon">✦</div>
+          <h3>ここにESが表示されます</h3>
+          <p>左側に情報を入力して<br>「AIでESを作成する」を押してください。</p>
+        </div>
+        <div id="result" class="result hidden">
+          <textarea id="output" aria-label="生成されたES"></textarea>
+          <div class="actions">
+            <button id="copy" class="secondary">コピー</button>
+            <button id="shorten" class="secondary">文字数に調整</button>
+            <button id="polish" class="secondary">もっと自然に</button>
+          </div>
+          <div id="feedback" class="feedback"></div>
+        </div>
+      </aside>
+    </section>
+  </main>
+  <footer>ES Maker · AI-generated draft. 必ず自分の経験・表現に合わせて確認してください。</footer>
+  <script src="/app.js"></script>
+</body>
+</html>
