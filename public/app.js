@@ -1,6 +1,6 @@
 const $=id=>document.getElementById(id);
 const form=$("esForm"), result=$("result"), status=$("status"), output=$("output"), count=$("count"), feedback=$("feedback");
-const adjustPercent=$("adjustPercent"), targetHint=$("targetHint");
+const adjustPercent=$("adjustPercent"), targetHint=$("targetHint"), genPercent=$("genPercent");
 const actionButtons=[$("copy"),$("shorten"),$("polish")];
 let lastPayload=null;
 
@@ -36,6 +36,11 @@ async function callAI(action="generate"){
     appeal:$("appeal").value.trim(),
     current:output.value
   };
+  if(action==="generate"){
+    const pct=Number(genPercent.value);
+    payload.targetPercent=pct;
+    payload.targetCount=Math.round(limit*pct/100);
+  }
   if(action==="adjust"){
     const pct=Number(adjustPercent.value);
     payload.targetPercent=pct;
@@ -67,12 +72,14 @@ async function callAI(action="generate"){
     result.classList.remove("hidden");
     status.className="empty hidden";
     let msg=data.note||"";
-    if(action==="adjust"){
+    if(action==="adjust"||action==="generate"){
       const target=data.targetCount??payload.targetCount;
-      const actual=data.actualCount??countChars(output.value);
-      const diff=actual-target;
-      const diffMsg=`目標${target}字 / 実際${actual}字（差 ${diff>=0?"+":""}${diff}字）`;
-      msg=msg?`${diffMsg}\n${msg}`:diffMsg;
+      if(target){
+        const actual=data.actualCount??countChars(output.value);
+        const diff=actual-target;
+        const diffMsg=`目標${target}字 / 実際${actual}字（差 ${diff>=0?"+":""}${diff}字）`;
+        msg=msg?`${diffMsg}\n${msg}`:diffMsg;
+      }
     }
     feedback.textContent=msg;
   }catch(e){
