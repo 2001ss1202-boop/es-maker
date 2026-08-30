@@ -1,6 +1,7 @@
 const $=id=>document.getElementById(id);
 const form=$("esForm"), result=$("result"), status=$("status"), output=$("output"), count=$("count"), feedback=$("feedback");
 const adjustPercent=$("adjustPercent"), targetHint=$("targetHint");
+const actionButtons=[$("copy"),$("shorten"),$("polish")];
 let lastPayload=null;
 
 function countChars(s){return [...s].length}
@@ -16,6 +17,11 @@ function updateTargetHint(){
 adjustPercent.addEventListener("change",updateTargetHint);
 $("limit").addEventListener("change",updateTargetHint);
 updateTargetHint();
+
+function setButtonsDisabled(disabled){
+  actionButtons.forEach(b=>b.disabled=disabled);
+  adjustPercent.disabled=disabled;
+}
 
 async function callAI(action="generate"){
   const limit=Number($("limit").value);
@@ -37,10 +43,21 @@ async function callAI(action="generate"){
   }
   if(action!=="generate" && !payload.current) return;
   lastPayload=payload;
-  status.className="loading";
-  status.innerHTML='<span class="dot"></span><span class="dot"></span><span class="dot"></span><span>AIが考えています…</span>';
-  result.classList.add("hidden");
-  feedback.textContent="";
+
+  const isInitialGenerate = action==="generate";
+
+  if(isInitialGenerate){
+    // 初回生成: これまで通りフルスクリーンのローディング/空状態を使う
+    status.className="loading";
+    status.innerHTML='<span class="dot"></span><span class="dot"></span><span class="dot"></span><span>AIが考えています…</span>';
+    result.classList.add("hidden");
+    feedback.textContent="";
+  }else{
+    // 調整・自然化: 生成結果パネルはそのまま残し、ボタンだけ一時的に無効化する
+    setButtonsDisabled(true);
+    feedback.textContent="AIが調整しています…";
+  }
+
   try{
     const r=await fetch("/api/generate",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)});
     const data=await r.json();
@@ -59,8 +76,15 @@ async function callAI(action="generate"){
     }
     feedback.textContent=msg;
   }catch(e){
-    status.className="empty";
-    status.innerHTML=`<div class="empty-icon">!</div><h3>生成できませんでした</h3><p>${escapeHtml(e.message)}</p>`;
+    if(isInitialGenerate){
+      status.className="empty";
+      status.innerHTML=`<div class="empty-icon">!</div><h3>生成できませんでした</h3><p>${escapeHtml(e.message)}</p>`;
+    }else{
+      // 調整・自然化の失敗時は元の文章を残したまま、エラーだけ伝えて再試行できるようにする
+      feedback.textContent=`調整できませんでした：${e.message}`;
+    }
+  }finally{
+    if(!isInitialGenerate) setButtonsDisabled(false);
   }
 }
 function escapeHtml(s){return s.replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"}[m]))}
