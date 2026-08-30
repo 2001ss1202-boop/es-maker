@@ -59,6 +59,50 @@ async function callGemini(prompt, key) {
   return extractFinal(raw);
 }
 
+// 目標文字数に向けて生成〜必要なら微調整までを行う共通ロジック
+// overShrinkOnly: true の場合は「削る」調整（adjustボタン用）、false は新規生成用
+async function generateTowardTarget({ base, target, pctLabel, seedPrompt, key }) {
+  const tolerance = Math.max(10, Math.round(target * 0.08)); // ±8%（最低10字）まで許容
+  const minAcceptable = target * 0.5;
+
+  let best = null;
+  let text = null;
+
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const promptBody = attempt === 0
+      ? seedPrompt
+      : (() => {
+          const prevActual = countChars(text);
+          const diff = prevActual - target;
+          const direction = diff > 0 ? `${diff}字ほど長い` : `${Math.abs(diff)}字ほど短い`;
+          return `${base}
+【現在のES（${prevActual}字）】
+${text}
+【依頼】
+このESは目標の${target}字${pctLabel}に対して${direction}状態です。内容や事実を変えずに、${target}字に近づけて調整してください。多少前後しても構いません。
+${FORMAT_RULE}`;
+        })();
+
+    try {
+      text = await callGemini(promptBody, key);
+    } catch (e) {
+      if (!best) throw e;
+      break;
+    }
+
+    const actual = countChars(text);
+    const diff = Math.abs(actual - target);
+
+    if (actual >= minAcceptable && (!best || diff < best.diff)) {
+      best = { text, actual, diff };
+    }
+
+    if (diff <= tolerance) break; // 十分近ければ終了（多少超えるのはOK）
+  }
+
+  return best;
+}
+
 async function handleGenerate(request, env) {
   try {
     const body = await request.json();
@@ -90,48 +134,16 @@ ${appeal || "指定なし"}
     if (action === "adjust") {
       const target = Number(targetCount) || Number(limit);
       const pctLabel = targetPercent ? `（目標文字数の${targetPercent}%）` : "";
-      const tolerance = Math.max(5, Math.round(target * 0.03)); // ±3%（最低5字）を許容誤差とする
-      const minAcceptable = target * 0.5; // これ未満は「壊れた出力」とみなす
 
-      let best = null; // {text, actual, diff}
-      let text = current;
-
-      for (let attempt = 0; attempt < 3; attempt++) {
-        const prevActual = countChars(text);
-        const promptBody = attempt === 0
-          ? `${base}
+      const seedPrompt = `${base}
 【現在のES】
 ${current}
 【依頼】
-以下の文章を、内容や事実を一切変えずに、${target}字ちょうど${pctLabel}に近づけて調整してください。
-文字数の一致を最優先し、表現の詳しさ・言い回しの長さで調整してください。
-${FORMAT_RULE}`
-          : (() => {
-              const diff = prevActual - target;
-              const direction = diff > 0 ? `${diff}字ほど長い` : `${Math.abs(diff)}字ほど短い`;
-              return `${base}
-【現在のES（${prevActual}字）】
-${text}
-【依頼】
-このESは目標の${target}字に対して${direction}状態です。内容や事実を変えずに、${target}字ちょうどになるよう文字数だけを精密に調整してください。
+以下の文章を、内容や事実を一切変えずに、${target}字${pctLabel}に近づけて調整してください。
+文字数を最優先しつつ、多少前後するのは問題ありません。表現の詳しさ・言い回しの長さで調整してください。
 ${FORMAT_RULE}`;
-            })();
 
-        try {
-          text = await callGemini(promptBody, key);
-        } catch (e) {
-          break; // API自体のエラーはループを抜けてbestで判定
-        }
-
-        const actual = countChars(text);
-        const diff = Math.abs(actual - target);
-
-        if (actual >= minAcceptable && (!best || diff < best.diff)) {
-          best = { text, actual, diff };
-        }
-
-        if (diff <= tolerance) break; // 十分な精度になったら終了
-      }
+      const best = await generateTowardTarget({ base, target, pctLabel, seedPrompt, key });
 
       if (!best) {
         return Response.json({ error: "AIの出力が不安定でした。もう一度「文字数に調整」を押してみてください。" }, { status: 502 });
@@ -145,25 +157,42 @@ ${FORMAT_RULE}`;
       });
     }
 
-    let task = "";
     if (action === "polish") {
-      task = "以下のESを、AIが書いたような不自然な表現を減らし、本人が実際に話しているような自然な日本語へ整えてください。事実の追加は禁止。";
-    } else {
-      task = `設問に対する完成度の高いESを${limit}字程度（必ず${limit}字以内）で作成してください。
+      const prompt = `${base}
+【現在のES】
+${current}
+【依頼】
+以下のESを、AIが書いたような不自然な表現を減らし、本人が実際に話しているような自然な日本語へ整えてください。事実の追加は禁止。
+${FORMAT_RULE}`;
+      const text = await callGemini(prompt, key);
+      return Response.json({ text, note: "AI生成文は必ず自分の経験・事実と一致しているか確認してください。" });
+    }
+
+    // action === "generate"（新規生成）
+    const target = targetCount ? Number(targetCount) : Number(limit);
+    const pctLabel = targetPercent && Number(targetPercent) !== 100 ? `（目標文字数の${targetPercent}%）` : "";
+
+    const seedPrompt = `${base}
+【依頼】
+設問に対する完成度の高いESを${target}字程度${pctLabel}で作成してください。多少前後しても構いませんが、大きく超えないようにしてください。
 構成は「結論→具体的な行動・工夫→結果→学び/仕事への活かし方」を基本とします。
 応募先・職種との関連が自然に出せる場合は反映してください。
 入力にない実績・数字・出来事を創作してはいけません。
-${tone}文章にしてください。`;
-    }
-
-    const prompt = `${base}
-${action !== "generate" ? `【現在のES】\n${current}` : ""}
-【依頼】
-${task}
+${tone}文章にしてください。
 ${FORMAT_RULE}`;
 
-    const text = await callGemini(prompt, key);
-    return Response.json({ text, note: "AI生成文は必ず自分の経験・事実と一致しているか確認してください。" });
+    const best = await generateTowardTarget({ base, target, pctLabel, seedPrompt, key });
+
+    if (!best) {
+      return Response.json({ error: "AIの出力が不安定でした。もう一度お試しください。" }, { status: 502 });
+    }
+
+    return Response.json({
+      text: best.text,
+      note: "AI生成文は必ず自分の経験・事実と一致しているか確認してください。",
+      targetCount: target,
+      actualCount: best.actual
+    });
   } catch (e) {
     return Response.json({ error: e?.message || "サーバーエラー" }, { status: e?.status || 500 });
   }
