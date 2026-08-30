@@ -2,6 +2,15 @@ const MODEL = "gemini-3.6-flash";
 
 function countChars(s) { return [...s].length; }
 
+// AIが文字数調整のために紛れ込ませる (1)(2)のような番号注釈やラベルを取り除く
+function sanitizeText(s) {
+  return s
+    .replace(/\(\d+\)/g, "")            // (1) (23) のような番号
+    .replace(/【[^】]{0,10}】(?=\S{0,3}$)/g, "") // 末尾に紛れ込む短いラベル
+    .replace(/[ \t]{2,}/g, " ")
+    .trim();
+}
+
 async function callGemini(prompt, key) {
   const resp = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent?key=${encodeURIComponent(key)}`, {
     method: "POST",
@@ -24,7 +33,7 @@ async function callGemini(prompt, key) {
     err.status = 502;
     throw err;
   }
-  return text;
+  return sanitizeText(text);
 }
 
 async function handleGenerate(request, env) {
@@ -67,7 +76,7 @@ ${current}
 【依頼】
 以下の文章を、内容や事実を一切変えずに、${target}字ちょうど${pctLabel}に近づけて調整してください。
 文字数の一致を最優先し、表現の詳しさ・言い回しの長さで調整してください。
-見出し・箇条書き・文字数表示は付けず、文章だけを返してください。
+出力は日本語の本文のみとし、見出し・箇条書き・文字数表示・(1)(2)のような番号や注釈は絶対に付けないでください。
 `, key);
 
       let actual = countChars(text);
@@ -80,9 +89,13 @@ ${current}
 ${text}
 【依頼】
 このESは目標の${target}字に対して${direction}状態です。内容や事実を変えずに、${target}字ちょうどになるよう文字数だけを精密に調整してください。
-文章だけを返してください。
+出力は日本語の本文のみとし、見出し・箇条書き・文字数表示・(1)(2)のような番号や注釈は絶対に付けないでください。
 `, key);
         actual = countChars(text);
+      }
+
+      if (actual < target * 0.3) {
+        return Response.json({ error: "AIの出力が不安定でした。もう一度「文字数に調整」を押してみてください。" }, { status: 502 });
       }
 
       return Response.json({
