@@ -1,31 +1,48 @@
 const MODEL = "gemini-3.6-flash";
 
+function countChars(s) { return [...s].length; }
+
+async function callGemini(prompt, key) {
+  const resp = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent?key=${encodeURIComponent(key)}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      contents: [{ parts: [{ text: prompt }] }],
+      generationConfig: { temperature: 0.6, maxOutputTokens: 1800 }
+    })
+  });
+  const data = await resp.json();
+  if (!resp.ok) {
+    const msg = data?.error?.message || "Gemini APIでエラーが発生しました。";
+    const err = new Error(msg);
+    err.status = 502;
+    throw err;
+  }
+  const text = data?.candidates?.[0]?.content?.parts?.map(p => p.text || "").join("").trim();
+  if (!text) {
+    const err = new Error("AIから文章が返りませんでした。");
+    err.status = 502;
+    throw err;
+  }
+  return text;
+}
+
 async function handleGenerate(request, env) {
   try {
     const body = await request.json();
-    const { action="generate", company="", role="", question="", limit=400, tone="自然で自分らしい", experience="", appeal="", current="" } = body;
+    const {
+      action = "generate", company = "", role = "", question = "", limit = 400,
+      tone = "自然で自分らしい", experience = "", appeal = "", current = "",
+      targetCount, targetPercent
+    } = body;
 
     if (!question || !experience) {
-      return Response.json({error:"設問と経験・エピソードを入力してください。"}, {status:400});
+      return Response.json({ error: "設問と経験・エピソードを入力してください。" }, { status: 400 });
     }
     const key = env.GEMINI_API_KEY;
-    if (!key) return Response.json({error:"GEMINI_API_KEYが設定されていません。CloudflareのVariables and Secretsに登録してください。"}, {status:500});
+    if (!key) return Response.json({ error: "GEMINI_API_KEYが設定されていません。CloudflareのVariables and Secretsに登録してください。" }, { status: 500 });
 
-    let task = "";
-    if (action === "adjust") {
-      task = `以下の文章を、内容を変えずに${limit}字以内へ自然に調整してください。文字数を最優先し、冗長な表現を削ってください。文章だけを返してください。`;
-    } else if (action === "polish") {
-      task = "以下のESを、AIが書いたような不自然な表現を減らし、本人が実際に話しているような自然な日本語へ整えてください。事実の追加は禁止。文章だけを返してください。";
-    } else {
-      task = `設問に対する完成度の高いESを${limit}字程度（必ず${limit}字以内）で作成してください。
-構成は「結論→具体的な行動・工夫→結果→学び/仕事への活かし方」を基本とします。
-応募先・職種との関連が自然に出せる場合は反映してください。
-入力にない実績・数字・出来事を創作してはいけません。
-${tone}文章にしてください。
-文章だけを返し、見出し・箇条書き・文字数表示は付けないでください。`;
-    }
-
-    const prompt = `
+    const base = `
 あなたは日本の新卒採用に詳しいES添削・作成アシスタントです。
 「盛る」「嘘を作る」ことではなく、本人の素材から強みが伝わる文章を作ることを重視してください。
 
@@ -36,32 +53,68 @@ ${tone}文章にしてください。
 ${experience}
 【特に伝えたいこと】
 ${appeal || "指定なし"}
+`;
 
+    if (action === "adjust") {
+      // targetCount（%指定）が来ていればそれを厳密なターゲットにする。無ければ limit を上限として扱う。
+      const target = Number(targetCount) || Number(limit);
+      const pctLabel = targetPercent ? `（目標文字数の${targetPercent}%）` : "";
+      const tolerance = Math.max(5, Math.round(target * 0.03)); // ±3%（最低5字）を許容誤差とする
+
+      let text = await callGemini(`${base}
+【現在のES】
+${current}
+【依頼】
+以下の文章を、内容や事実を一切変えずに、${target}字ちょうど${pctLabel}に近づけて調整してください。
+文字数の一致を最優先し、表現の詳しさ・言い回しの長さで調整してください。
+見出し・箇条書き・文字数表示は付けず、文章だけを返してください。
+`, key);
+
+      let actual = countChars(text);
+      // 誤差が許容範囲外なら、実際の文字数を伝えて再調整を1回だけ依頼する
+      if (Math.abs(actual - target) > tolerance) {
+        const diff = actual - target;
+        const direction = diff > 0 ? `${diff}字ほど長い` : `${Math.abs(diff)}字ほど短い`;
+        text = await callGemini(`${base}
+【現在のES（${actual}字）】
+${text}
+【依頼】
+このESは目標の${target}字に対して${direction}状態です。内容や事実を変えずに、${target}字ちょうどになるよう文字数だけを精密に調整してください。
+文章だけを返してください。
+`, key);
+        actual = countChars(text);
+      }
+
+      return Response.json({
+        text,
+        note: "AI生成文は必ず自分の経験・事実と一致しているか確認してください。",
+        targetCount: target,
+        actualCount: actual
+      });
+    }
+
+    let task = "";
+    if (action === "polish") {
+      task = "以下のESを、AIが書いたような不自然な表現を減らし、本人が実際に話しているような自然な日本語へ整えてください。事実の追加は禁止。文章だけを返してください。";
+    } else {
+      task = `設問に対する完成度の高いESを${limit}字程度（必ず${limit}字以内）で作成してください。
+構成は「結論→具体的な行動・工夫→結果→学び/仕事への活かし方」を基本とします。
+応募先・職種との関連が自然に出せる場合は反映してください。
+入力にない実績・数字・出来事を創作してはいけません。
+${tone}文章にしてください。
+文章だけを返し、見出し・箇条書き・文字数表示は付けないでください。`;
+    }
+
+    const prompt = `${base}
 ${action !== "generate" ? `【現在のES】\n${current}` : ""}
 【依頼】
 ${task}
 `;
 
-    const resp = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent?key=${encodeURIComponent(key)}`, {
-      method:"POST",
-      headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({
-        contents:[{parts:[{text:prompt}]}],
-        generationConfig:{temperature:0.65, maxOutputTokens:1800}
-      })
-    });
-
-    const data = await resp.json();
-    if (!resp.ok) {
-      const msg = data?.error?.message || "Gemini APIでエラーが発生しました。";
-      return Response.json({error:msg}, {status:502});
-    }
-    const text = data?.candidates?.[0]?.content?.parts?.map(p=>p.text||"").join("").trim();
-    if (!text) return Response.json({error:"AIから文章が返りませんでした。"}, {status:502});
-
-    return Response.json({text, note:"AI生成文は必ず自分の経験・事実と一致しているか確認してください。"});
+    const text = await callGemini(prompt, key);
+    return Response.json({ text, note: "AI生成文は必ず自分の経験・事実と一致しているか確認してください。" });
   } catch (e) {
-    return Response.json({error:e?.message || "サーバーエラー"}, {status:500});
+    return Response.json({ error: e?.message || "サーバーエラー" }, { status: e?.status || 500 });
   }
 }
 
