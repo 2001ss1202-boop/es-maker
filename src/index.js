@@ -1,14 +1,36 @@
 const MODEL = "gemini-3.6-flash";
 
+const START_TAG = "@@ES_START@@";
+const END_TAG = "@@ES_END@@";
+
+const FORMAT_RULE = `
+【出力形式（厳守）】
+前置き・確認・注釈・見出し・箇条書き・文字数表示・(1)(2)のような番号は一切書かないでください。
+本文だけを、必ず次の形式で出力してください。タグの外側には何も書かないでください。
+${START_TAG}
+（ここにES本文のみ）
+${END_TAG}
+`;
+
 function countChars(s) { return [...s].length; }
 
-// AIが文字数調整のために紛れ込ませる (1)(2)のような番号注釈やラベルを取り除く
-function sanitizeText(s) {
+// 万一タグが無いレスポンスが返ってきた場合の保険的クリーンアップ
+function fallbackClean(s) {
   return s
-    .replace(/\(\d+\)/g, "")            // (1) (23) のような番号
-    .replace(/【[^】]{0,10}】(?=\S{0,3}$)/g, "") // 末尾に紛れ込む短いラベル
+    .replace(new RegExp(START_TAG, "g"), "")
+    .replace(new RegExp(END_TAG, "g"), "")
+    .replace(/\(\d+\)/g, "")
+    .split("\n")
+    .filter(line => !/^(出力ルール|ルール確認|確認[:：]|これで最終|最終出力|注意事項|チェック|format|Format)/.test(line.trim()))
+    .join("\n")
     .replace(/[ \t]{2,}/g, " ")
     .trim();
+}
+
+function extractFinal(raw) {
+  const m = raw.match(new RegExp(START_TAG.replace(/[@]/g, "\\@") + "([\\s\\S]*?)" + END_TAG.replace(/[@]/g, "\\@")));
+  if (m) return m[1].trim();
+  return fallbackClean(raw);
 }
 
 async function callGemini(prompt, key) {
@@ -27,13 +49,13 @@ async function callGemini(prompt, key) {
     err.status = 502;
     throw err;
   }
-  const text = data?.candidates?.[0]?.content?.parts?.map(p => p.text || "").join("").trim();
-  if (!text) {
+  const raw = data?.candidates?.[0]?.content?.parts?.map(p => p.text || "").join("").trim();
+  if (!raw) {
     const err = new Error("AIから文章が返りませんでした。");
     err.status = 502;
     throw err;
   }
-  return sanitizeText(text);
+  return extractFinal(raw);
 }
 
 async function handleGenerate(request, env) {
@@ -76,8 +98,7 @@ ${current}
 【依頼】
 以下の文章を、内容や事実を一切変えずに、${target}字ちょうど${pctLabel}に近づけて調整してください。
 文字数の一致を最優先し、表現の詳しさ・言い回しの長さで調整してください。
-出力は日本語の本文のみとし、見出し・箇条書き・文字数表示・(1)(2)のような番号や注釈は絶対に付けないでください。
-`, key);
+${FORMAT_RULE}`, key);
 
       let actual = countChars(text);
       // 誤差が許容範囲外なら、実際の文字数を伝えて再調整を1回だけ依頼する
@@ -89,8 +110,7 @@ ${current}
 ${text}
 【依頼】
 このESは目標の${target}字に対して${direction}状態です。内容や事実を変えずに、${target}字ちょうどになるよう文字数だけを精密に調整してください。
-出力は日本語の本文のみとし、見出し・箇条書き・文字数表示・(1)(2)のような番号や注釈は絶対に付けないでください。
-`, key);
+${FORMAT_RULE}`, key);
         actual = countChars(text);
       }
 
@@ -108,21 +128,20 @@ ${text}
 
     let task = "";
     if (action === "polish") {
-      task = "以下のESを、AIが書いたような不自然な表現を減らし、本人が実際に話しているような自然な日本語へ整えてください。事実の追加は禁止。文章だけを返してください。";
+      task = "以下のESを、AIが書いたような不自然な表現を減らし、本人が実際に話しているような自然な日本語へ整えてください。事実の追加は禁止。";
     } else {
       task = `設問に対する完成度の高いESを${limit}字程度（必ず${limit}字以内）で作成してください。
 構成は「結論→具体的な行動・工夫→結果→学び/仕事への活かし方」を基本とします。
 応募先・職種との関連が自然に出せる場合は反映してください。
 入力にない実績・数字・出来事を創作してはいけません。
-${tone}文章にしてください。
-文章だけを返し、見出し・箇条書き・文字数表示は付けないでください。`;
+${tone}文章にしてください。`;
     }
 
     const prompt = `${base}
 ${action !== "generate" ? `【現在のES】\n${current}` : ""}
 【依頼】
 ${task}
-`;
+${FORMAT_RULE}`;
 
     const text = await callGemini(prompt, key);
     return Response.json({ text, note: "AI生成文は必ず自分の経験・事実と一致しているか確認してください。" });
