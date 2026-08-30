@@ -1,1 +1,10 @@
-{ "$schema": "node_modules/wrangler/config-schema.json", "name": "es-maker", "compatibility_date": "2026-08-28", "assets": { "directory": "./public" } }
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "es-maker",
+  "compatibility_date": "2026-08-28",
+  "main": "src/index.js",
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS"
+  }
+}
