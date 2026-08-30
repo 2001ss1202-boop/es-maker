@@ -1,5 +1,1 @@
-{
-  "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "es-maker",
-  "pages_build_output_dir": "./public"
-}
+{ "$schema": "node_modules/wrangler/config-schema.json", "name": "es-maker", "compatibility_date": "2026-08-28", "assets": { "directory": "./public" } }
