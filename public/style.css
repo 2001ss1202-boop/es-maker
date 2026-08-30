@@ -3,3 +3,4 @@
 .adjust-row label{margin:0;flex:0 0 auto}
 .adjust-row select{width:auto;min-width:170px}
 .target-hint{font-size:12px;color:#6b61ff;font-weight:700;padding-bottom:11px}
+.secondary:disabled{opacity:.5;cursor:wait}
